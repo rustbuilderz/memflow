@@ -1,0 +1,9 @@
+    Updating crates.io index
+error: failed to select a version for `memflow`.
+    ... required by package `memflow_qemu_test v0.1.0 (/home/KonsoleUser/Downloads/tewst/connector/memflow_qemu_test)`
+versions that meet the requirements `*` are: 0.2.3
+
+the package `memflow_qemu_test` depends on `memflow`, with features: `os` but `memflow` does not have these features.
+
+
+failed to select a version for `memflow` which could resolve this conflict
