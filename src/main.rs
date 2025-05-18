@@ -1,12 +1,16 @@
 use anyhow::{anyhow, Context, Result};
 use memflow::prelude::v1::*;
-use memflow_qemu_procfs::QemuProcfs;
+use memflow_qemu_procfs::{QemuProcfs};
 use memflow_win32::{Kernel, Win32Process};
+use std::str;
 
 fn main() -> Result<()> {
     println!("[*] Connecting to QEMU VM via memflow-win32...");
-    let mut connector = QemuProcfs::new()?;
 
+    // Using QemuProcfs for connector
+    let mut connector = QemuProcfs::new().context("Failed to create QEMU connector")?;
+
+    // Initialize kernel with the connector
     let mut kernel = Kernel::builder(&mut connector)
     .build()
     .context("Failed to initialize Win32 kernel")?;
@@ -43,13 +47,46 @@ fn main() -> Result<()> {
                 offset, target_address
             );
 
-            let raw: u32 = process
-            .virt_mem
-            .virt_read(target_address)
-            .context("Failed to read memory at target address")?;
+            // Loop to continuously read memory until a non-zero or valid float is found
+            loop {
+                let raw: u32 = process
+                .virt_mem
+                .virt_read(target_address)
+                .context("Failed to read memory at target address")?;
 
-            let float_val = f32::from_bits(raw);
-            println!("[+] Raw: {} | Float: {:.3}", raw, float_val);
+                let float_val = f32::from_bits(raw);
+
+                if raw != 0 {
+                    println!("[+] Raw: {} | Float: {:.3}", raw, float_val);
+                    break; // Exit the loop when a valid value is found
+                } else {
+                    println!("[*] Raw: 0 (waiting for valid value...)");
+                }
+            }
+
+            // Reading next 64 bytes as UTF-8 string
+            let string_start_address = base_address + 0x500; // Example offset for string (can be adjusted)
+            let mut string_buf = vec![0u8; 64]; // Buffer to store UTF-8 bytes
+
+            process
+            .virt_mem
+            .virt_read_raw_into(string_start_address, &mut string_buf)
+            .context("Failed to read memory for UTF-8 string")?;
+
+            // Print the raw bytes for inspection
+            println!("[DEBUG] Raw memory bytes: {:?}", string_buf);
+
+            // Try to decode the buffer as UTF-8 string
+            match str::from_utf8(&string_buf) {
+                Ok(decoded_str) => {
+                    println!("[+] Decoded UTF-8 string: {}", decoded_str);
+                }
+                Err(_) => {
+                    // If it fails to decode as UTF-8, print as raw data
+                    let ascii_string = string_buf.iter().map(|&b| b as char).collect::<String>();
+                    println!("[*] Failed to decode UTF-8 string. Raw data: {}", ascii_string);
+                }
+            }
 
             return Ok(());
         }
