@@ -1,30 +1,61 @@
-use anyhow::Result;
-use memflow::mem::virt_mem::VirtualMemory;
-use memflow_win32::win32::Kernel;
+use anyhow::{Context, Result};
+use memflow::mem::VirtualMemory;
 use memflow_qemu_procfs::QemuProcfs;
+use memflow_win32::win32::{Kernel, Win32Process};
 
 fn main() -> Result<()> {
+    println!("[*] Connecting to QEMU VM 'win10v2'...");
     let mut connector = QemuProcfs::new()?;
+    println!("[+] Connected.");
+
     let mut kernel = Kernel::builder(&mut connector).build()?;
+    println!("[+] Kernel initialized.");
 
-    let mut process = kernel.into_process("Muck.exe")?;
+    let target_proc = "r5apex_dx12";
 
-    let modules = process.module_list()?;
-    let module = modules.iter()
-    .find(|m| m.name.to_ascii_lowercase().contains("mono-2.0-bdwgc"))
-    .expect("mono-2.0-bdwgc.dll not found");
+    println!("[*] Searching for process starting with '{}'", target_proc);
+    let proc_list = kernel.process_info_list().context("Failed to list processes")?;
 
-    let mut addr = module.base + 0x00496DA8;
-    let offsets = [0x64, 0xB8, 0x20, 0x60, 0xB0, 0xE20, 0x70];
+    for proc in proc_list {
+        let name = proc.name.to_lowercase();
+        println!("[DEBUG] Found process: {}", name);
 
-    let mut virt = process.virt_mem;
+        if name.starts_with(target_proc) {
+            println!("[+] Match found: {}", name);
+            println!("[*] Attempting to attach to process '{}'...", proc.name);
 
-    for &offset in &offsets[..offsets.len() - 1] {
-        addr = virt.virt_read_addr64(addr + offset)?;
+            let mut process = kernel
+            .into_process(&proc.name)
+            .context("[ERR] Failed to attach to process")?;
+
+            println!("[+] Successfully attached to {}", name);
+
+            let module = process
+            .module_info(&proc.name)
+            .context("Failed to retrieve module info")?;
+
+            let base_address = module.base;
+            let offset = 0x481;
+            let target_address = base_address + offset;
+
+            println!("[*] Module base: {:#X}", base_address);
+            println!(
+                "[*] Reading from offset 0x{:X} -> Addr: {:#X}",
+                offset, target_address
+            );
+
+            let raw: u32 = process
+            .virt_mem
+            .virt_read(target_address)
+            .context("Failed to read memory at target address")?;
+
+            let float_val = f32::from_bits(raw);
+            println!("[+] Raw: {} | Float: {:.3}", raw, float_val);
+
+            return Ok(());
+        }
     }
 
-    let final_value: i32 = virt.virt_read(addr + offsets[offsets.len() - 1])?;
-    println!("INF-STAMINA Value: {}", final_value);
-
+    println!("[-] Failed to find a matching process.");
     Ok(())
 }
